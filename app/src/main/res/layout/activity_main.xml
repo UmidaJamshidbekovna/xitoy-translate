@@ -1,38 +1,103 @@
 <?xml version="1.0" encoding="utf-8"?>
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:orientation="vertical"
-    android:gravity="center"
-    android:padding="24dp">
+    android:fillViewport="true">
 
-    <TextView
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="@string/app_name"
-        android:textSize="26sp"
-        android:textStyle="bold"
-        android:layout_marginBottom="24dp" />
-
-    <TextView
-        android:id="@+id/info"
+    <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:textSize="16sp"
-        android:lineSpacingExtra="4dp"
-        android:layout_marginBottom="32dp" />
+        android:orientation="vertical"
+        android:padding="24dp">
 
-    <Button
-        android:id="@+id/startBtn"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:text="Boshlash" />
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Ekran Tarjimon"
+            android:textSize="28sp"
+            android:textStyle="bold"
+            android:layout_marginBottom="4dp" />
 
-    <Button
-        android:id="@+id/stopBtn"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="12dp"
-        android:text="To'xtatish" />
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Xitoycha → O'zbekcha (ekran ustida)"
+            android:textSize="15sp"
+            android:alpha="0.7"
+            android:layout_marginBottom="28dp" />
 
-</LinearLayout>
+        <!-- 1-qadam: ruxsat -->
+        <TextView
+            android:id="@+id/overlayStatus"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="1. Ekran ustida ko'rsatish ruxsati"
+            android:textSize="17sp"
+            android:layout_marginBottom="8dp" />
+
+        <Button
+            android:id="@+id/overlayBtn"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Ruxsat berish"
+            android:layout_marginBottom="24dp" />
+
+        <!-- 2-qadam: yoqish -->
+        <TextView
+            android:id="@+id/serviceStatus"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="2. Tarjimonni yoqish"
+            android:textSize="17sp"
+            android:layout_marginBottom="8dp" />
+
+        <Button
+            android:id="@+id/startBtn"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="▶  Ishga tushirish" />
+
+        <Button
+            android:id="@+id/stopBtn"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="10dp"
+            android:text="■  To'xtatish" />
+
+        <!-- Yo'riqnoma -->
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="32dp"
+            android:text="Qanday ishlaydi:"
+            android:textStyle="bold"
+            android:textSize="16sp" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:lineSpacingExtra="5dp"
+            android:textSize="15sp"
+            android:text="• Yoqilgach, ekran chetida ko'k tugma (译) paydo bo'ladi.\n• Taobao, Alipay, Pinduoduo kabi ilovani oching.\n• Ko'k tugmani bosing — xitoycha yozuv o'zbekchaga tarjima bo'lib, ustiga chiqadi.\n• Birinchi bosishда 'Ekranni yozib olish' ruxsati bir marta so'raladi — Boshlash deng.\n• Yopish uchun ekranga bosing. Tugmani xohlagan joyga suring." />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="24dp"
+            android:text="Xiaomi / Redmi / Poco telefonlar uchun:"
+            android:textStyle="bold"
+            android:textSize="15sp" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:layout_marginBottom="16dp"
+            android:lineSpacingExtra="4dp"
+            android:textSize="14sp"
+            android:alpha="0.85"
+            android:text="Sozlamalar → Ilovalar → Ekran Tarjimon → 'Autostart / Автозапуск' ni ham yoqing. Aks holda tugma ba'zan chiqmaydi." />
+
+    </LinearLayout>
+</ScrollView>

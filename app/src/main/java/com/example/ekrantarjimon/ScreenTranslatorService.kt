@@ -3,11 +3,14 @@ package com.example.ekrantarjimon
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
+import android.graphics.Color
 import android.graphics.PixelFormat
+import android.graphics.drawable.GradientDrawable
 import android.hardware.display.DisplayManager
 import android.hardware.display.VirtualDisplay
 import android.media.ImageReader
@@ -17,6 +20,7 @@ import android.os.Build
 import android.os.Handler
 import android.os.HandlerThread
 import android.os.IBinder
+import android.os.Looper
 import android.util.DisplayMetrics
 import android.view.Gravity
 import android.view.MotionEvent
@@ -38,44 +42,50 @@ import kotlinx.coroutines.withContext
 class ScreenTranslatorService : Service() {
 
     companion object {
+        const val ACTION_START = "start"
+        const val ACTION_PROJECTION_RESULT = "projection_result"
         const val EXTRA_CODE = "code"
         const val EXTRA_DATA = "data"
         private const val CHANNEL_ID = "ekran_tarjimon"
         private const val NOTIF_ID = 1
+
+        @Volatile
+        var isRunning = false
+            private set
     }
 
     private lateinit var windowManager: WindowManager
     private var bubbleView: View? = null
     private var overlayView: OverlayView? = null
+    private var loadingView: TextView? = null
 
     private var mediaProjection: MediaProjection? = null
     private val metrics = DisplayMetrics()
 
     private val bgThread = HandlerThread("capture").apply { start() }
     private val bgHandler = Handler(bgThread.looper)
-    private val uiHandler = Handler(android.os.Looper.getMainLooper())
+    private val uiHandler = Handler(Looper.getMainLooper())
     private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
 
     private val recognizer =
         TextRecognition.getClient(ChineseTextRecognizerOptions.Builder().build())
 
     private var busy = false
+    private var pendingCapture = false
 
     override fun onBind(intent: Intent?): IBinder? = null
 
-    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+    override fun onCreate() {
+        super.onCreate()
+        isRunning = true
+        windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
         startForeground(NOTIF_ID, buildNotification())
+    }
 
-        val code = intent?.getIntExtra(EXTRA_CODE, 0) ?: 0
-        val data = intent?.getParcelableExtra<Intent>(EXTRA_DATA)
-
-        if (code != 0 && data != null && mediaProjection == null) {
-            val mpm = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
-            mediaProjection = mpm.getMediaProjection(code, data)
-            windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
-            @Suppress("DEPRECATION")
-            windowManager.defaultDisplay.getRealMetrics(metrics)
-            showBubble()
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        when (intent?.action) {
+            ACTION_PROJECTION_RESULT -> setupProjection(intent)
+            else -> showBubble() // ACTION_START
         }
         return START_STICKY
     }
@@ -83,28 +93,29 @@ class ScreenTranslatorService : Service() {
     // ---------- Suzuvchi tugma ----------
 
     private fun showBubble() {
+        updateMetrics()
         if (bubbleView != null) return
 
         val bubble = TextView(this).apply {
             text = "译"
-            textSize = 22f
-            setTextColor(0xFFFFFFFF.toInt())
+            textSize = 24f
+            setTextColor(Color.WHITE)
             gravity = Gravity.CENTER
             setBackgroundResource(R.drawable.bubble_bg)
+            elevation = dp(6).toFloat()
         }
 
         val params = WindowManager.LayoutParams(
-            dp(56), dp(56),
+            dp(58), dp(58),
             overlayType(),
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.TOP or Gravity.START
-            x = dp(12)
-            y = dp(200)
+            x = dp(8)
+            y = dp(220)
         }
 
-        // Sudrash + bosishni ajratish
         var initialX = 0
         var initialY = 0
         var touchX = 0f
@@ -124,14 +135,21 @@ class ScreenTranslatorService : Service() {
                 MotionEvent.ACTION_MOVE -> {
                     val dx = (e.rawX - touchX).toInt()
                     val dy = (e.rawY - touchY).toInt()
-                    if (kotlin.math.abs(dx) > 12 || kotlin.math.abs(dy) > 12) moved = true
+                    if (kotlin.math.abs(dx) > 14 || kotlin.math.abs(dy) > 14) moved = true
                     params.x = initialX + dx
                     params.y = initialY + dy
-                    windowManager.updateViewLayout(bubble, params)
+                    safeUpdate(bubble, params)
                     true
                 }
                 MotionEvent.ACTION_UP -> {
-                    if (!moved) onBubbleTap()
+                    if (moved) {
+                        // Chekkaga yopishtirish
+                        params.x = if (params.x + dp(29) < metrics.widthPixels / 2) dp(8)
+                        else metrics.widthPixels - dp(66)
+                        safeUpdate(bubble, params)
+                    } else {
+                        onBubbleTap()
+                    }
                     true
                 }
                 else -> false
@@ -139,25 +157,68 @@ class ScreenTranslatorService : Service() {
         }
 
         bubbleView = bubble
-        windowManager.addView(bubble, params)
+        try {
+            windowManager.addView(bubble, params)
+        } catch (e: Exception) {
+            Toast.makeText(this, "Tugmani chiqarib bo'lmadi. Ruxsatni tekshiring.", Toast.LENGTH_LONG).show()
+        }
     }
 
     private fun onBubbleTap() {
         if (busy) return
-        removeOverlay()
-        busy = true
-        bubbleView?.visibility = View.GONE // o'zimizni suratga tushirmaymiz
-        Toast.makeText(this, "Tarjima qilinyapti...", Toast.LENGTH_SHORT).show()
-        // Tugma yashiringandan keyin ozgina kutib suratga olamiz
-        uiHandler.postDelayed({ captureScreen() }, 250)
+        if (mediaProjection == null) {
+            // Birinchi marta — ekran ruxsatini so'raymiz
+            pendingCapture = true
+            val i = Intent(this, ProjectionRequestActivity::class.java)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            startActivity(i)
+        } else {
+            startCapture()
+        }
     }
 
-    // ---------- Ekranni suratga olish ----------
+    private fun setupProjection(intent: Intent) {
+        val code = intent.getIntExtra(EXTRA_CODE, 0)
+        val data = intent.getParcelableExtra<Intent>(EXTRA_DATA)
+        if (code == 0 || data == null) {
+            pendingCapture = false
+            return
+        }
+        val mpm = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+        mediaProjection = mpm.getMediaProjection(code, data)
+        mediaProjection?.registerCallback(object : MediaProjection.Callback() {
+            override fun onStop() {
+                mediaProjection = null
+            }
+        }, uiHandler)
+
+        if (pendingCapture) {
+            pendingCapture = false
+            startCapture()
+        }
+    }
+
+    // ---------- Suratga olish ----------
+
+    private fun startCapture() {
+        if (busy) return
+        busy = true
+        removeOverlay()
+        bubbleView?.visibility = View.GONE
+        uiHandler.postDelayed({ captureScreen() }, 300)
+    }
 
     private fun captureScreen() {
+        updateMetrics()
         val width = metrics.widthPixels
         val height = metrics.heightPixels
         val density = metrics.densityDpi
+
+        val projection = mediaProjection
+        if (projection == null) {
+            finishCapture()
+            return
+        }
 
         val imageReader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 2)
         var virtualDisplay: VirtualDisplay? = null
@@ -170,11 +231,14 @@ class ScreenTranslatorService : Service() {
                 reader.setOnImageAvailableListener(null, null)
                 virtualDisplay?.release()
                 reader.close()
-                uiHandler.post { runOcr(bitmap) }
+                uiHandler.post {
+                    showLoading()
+                    runOcr(bitmap)
+                }
             }
         }, bgHandler)
 
-        virtualDisplay = mediaProjection?.createVirtualDisplay(
+        virtualDisplay = projection.createVirtualDisplay(
             "screen_capture",
             width, height, density,
             DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
@@ -185,8 +249,8 @@ class ScreenTranslatorService : Service() {
 
         if (virtualDisplay == null) {
             imageReader.close()
+            Toast.makeText(this, "Ekranni o'qib bo'lmadi.", Toast.LENGTH_SHORT).show()
             finishCapture()
-            Toast.makeText(this, "Ekranni o'qib bo'lmadi. Qayta yoqing.", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -219,6 +283,7 @@ class ScreenTranslatorService : Service() {
                     if (txt.isNotEmpty()) raw.add(TranslatedBlock(box, txt))
                 }
                 if (raw.isEmpty()) {
+                    hideLoading()
                     Toast.makeText(this, "Yozuv topilmadi.", Toast.LENGTH_SHORT).show()
                     finishCapture()
                 } else {
@@ -226,6 +291,7 @@ class ScreenTranslatorService : Service() {
                 }
             }
             .addOnFailureListener {
+                hideLoading()
                 Toast.makeText(this, "O'qishda xatolik.", Toast.LENGTH_SHORT).show()
                 finishCapture()
             }
@@ -238,12 +304,13 @@ class ScreenTranslatorService : Service() {
                     async { TranslatedBlock(b.rect, Translator.translate(b.text)) }
                 }.awaitAll()
             }
+            hideLoading()
             showOverlay(translated)
             finishCapture()
         }
     }
 
-    // ---------- Natijani ko'rsatish ----------
+    // ---------- Ko'rsatish ----------
 
     private fun showOverlay(blocks: List<TranslatedBlock>) {
         removeOverlay()
@@ -257,14 +324,40 @@ class ScreenTranslatorService : Service() {
             PixelFormat.TRANSLUCENT
         )
         overlayView = view
-        windowManager.addView(view, params)
+        try { windowManager.addView(view, params) } catch (_: Exception) {}
     }
 
     private fun removeOverlay() {
-        overlayView?.let {
-            try { windowManager.removeView(it) } catch (_: Exception) {}
-        }
+        overlayView?.let { try { windowManager.removeView(it) } catch (_: Exception) {} }
         overlayView = null
+    }
+
+    private fun showLoading() {
+        if (loadingView != null) return
+        val tv = TextView(this).apply {
+            text = "  Tarjima qilinmoqda…  "
+            setTextColor(Color.WHITE)
+            textSize = 16f
+            setPadding(dp(20), dp(14), dp(20), dp(14))
+            background = GradientDrawable().apply {
+                cornerRadius = dp(24).toFloat()
+                setColor(Color.parseColor("#E6000000"))
+            }
+        }
+        val params = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            overlayType(),
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
+            PixelFormat.TRANSLUCENT
+        ).apply { gravity = Gravity.CENTER }
+        loadingView = tv
+        try { windowManager.addView(tv, params) } catch (_: Exception) {}
+    }
+
+    private fun hideLoading() {
+        loadingView?.let { try { windowManager.removeView(it) } catch (_: Exception) {} }
+        loadingView = null
     }
 
     private fun finishCapture() {
@@ -273,6 +366,15 @@ class ScreenTranslatorService : Service() {
     }
 
     // ---------- Yordamchi ----------
+
+    private fun updateMetrics() {
+        @Suppress("DEPRECATION")
+        windowManager.defaultDisplay.getRealMetrics(metrics)
+    }
+
+    private fun safeUpdate(v: View, p: WindowManager.LayoutParams) {
+        try { windowManager.updateViewLayout(v, p) } catch (_: Exception) {}
+    }
 
     private fun overlayType(): Int =
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
@@ -286,12 +388,14 @@ class ScreenTranslatorService : Service() {
     private fun buildNotification(): Notification {
         val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel(
-                CHANNEL_ID, "Ekran tarjimon",
-                NotificationManager.IMPORTANCE_LOW
+            nm.createNotificationChannel(
+                NotificationChannel(CHANNEL_ID, "Ekran tarjimon", NotificationManager.IMPORTANCE_LOW)
             )
-            nm.createNotificationChannel(channel)
         }
+        val open = PendingIntent.getActivity(
+            this, 0, Intent(this, MainActivity::class.java),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
         val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
             Notification.Builder(this, CHANNEL_ID)
         else
@@ -299,17 +403,19 @@ class ScreenTranslatorService : Service() {
 
         return builder
             .setContentTitle("Ekran tarjimon ishlayapti")
-            .setContentText("Xitoycha yozuvni tarjima qilish uchun tugmani bosing")
+            .setContentText("Tarjima uchun ko'k tugmani bosing")
             .setSmallIcon(android.R.drawable.ic_menu_search)
+            .setContentIntent(open)
+            .setOngoing(true)
             .build()
     }
 
     override fun onDestroy() {
         super.onDestroy()
+        isRunning = false
+        hideLoading()
         removeOverlay()
-        bubbleView?.let {
-            try { windowManager.removeView(it) } catch (_: Exception) {}
-        }
+        bubbleView?.let { try { windowManager.removeView(it) } catch (_: Exception) {} }
         bubbleView = null
         mediaProjection?.stop()
         mediaProjection = null
