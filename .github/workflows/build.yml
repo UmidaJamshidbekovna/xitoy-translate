@@ -1,0 +1,36 @@
+name: Build APK
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Kodni olish
+        uses: actions/checkout@v4
+
+      - name: JDK 17 o'rnatish
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Android SDK o'rnatish
+        uses: android-actions/setup-android@v3
+
+      - name: Litsenziyalarni qabul qilish
+        run: yes | sdkmanager --licenses || true
+
+      - name: Gradle wrapper yaratish
+        run: gradle wrapper --gradle-version 8.2
+
+      - name: APK yig'ish
+        run: ./gradlew assembleDebug --stacktrace
+
+      - name: APK'ni yuklash
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-debug-apk
+          path: app/build/outputs/apk/debug/app-debug.apk

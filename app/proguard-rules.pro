@@ -1,0 +1,1 @@
+# Standart ProGuard qoidalari
